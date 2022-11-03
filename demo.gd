@@ -1,17 +1,13 @@
 extends SubViewport
 
-var vertSrc = "#version 450
-vec2 positions[3] = vec2[](
-    vec2(0.0, -0.5),
-    vec2(0.5, 0.5),
-    vec2(-0.5, 0.5)
-);
+var vert_src := "#version 450
+layout(location = 0) in vec2 pos;
 
 void main() {
-    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    gl_Position = vec4(pos, 0.0, 1.0);
 }"
 
-var fragSrc = "#version 450
+var frag_src := "#version 450
 layout(location = 0) out vec4 outColor;
 
 void main() {
@@ -21,28 +17,45 @@ void main() {
 var framebuffer: RID
 var pipeline: RID
 var shader: RID
-var clearColors := PackedColorArray([Color.TRANSPARENT])
-@onready var rd := RenderingServer.get_rendering_device()
+var vtx_buf: RID
+var vtx_array: RID
+var clear_colors := PackedColorArray([Color.TRANSPARENT])
+@onready var RD := RenderingServer.get_rendering_device()
 
 func create_framebuffer():
     var vptex := RenderingServer.texture_get_rd_texture(get_texture().get_rid())
-    framebuffer = rd.framebuffer_create([vptex])
+    framebuffer = RD.framebuffer_create([vptex])
 
 func _ready():
     var src := RDShaderSource.new()
-    src.source_fragment = fragSrc
-    src.source_vertex = vertSrc
-    var spirv := rd.shader_compile_spirv_from_source(src)
-    shader = rd.shader_create_from_spirv(spirv)
+    src.source_fragment = frag_src
+    src.source_vertex = vert_src
+    var spirv := RD.shader_compile_spirv_from_source(src)
+    shader = RD.shader_create_from_spirv(spirv)
+    
+    var vattr := RDVertexAttribute.new()
+    vattr.format = RenderingDevice.DATA_FORMAT_R32G32_SFLOAT
+    vattr.location = 0
+    vattr.stride = 4 + 4
+    
+    var points := PackedFloat32Array([
+        0.0, -0.5,
+        0.5, 0.5,
+        -0.5, 0.5,
+    ])
+    var points_raw := points.to_byte_array()
+    vtx_buf = RD.vertex_buffer_create(points_raw.size(), points_raw)
+    var vtx_format := RD.vertex_format_create([vattr])
+    vtx_array = RD.vertex_array_create(3, vtx_format, [vtx_buf])
     
     create_framebuffer()
     
     var blend := RDPipelineColorBlendState.new()
     blend.attachments.push_back(RDPipelineColorBlendStateAttachment.new())
-    pipeline = rd.render_pipeline_create(
+    pipeline = RD.render_pipeline_create(
         shader,
-        rd.screen_get_framebuffer_format(),
-        -1,
+        RD.screen_get_framebuffer_format(),
+        vtx_format,
         RenderingDevice.RENDER_PRIMITIVE_TRIANGLES,
         RDPipelineRasterizationState.new(),
         RDPipelineMultisampleState.new(),
@@ -51,19 +64,22 @@ func _ready():
     )
     
 func _exit_tree():
-    rd.free_rid(pipeline)
-    rd.free_rid(framebuffer)
-    rd.free_rid(shader)
+    RD.free_rid(vtx_array)
+    RD.free_rid(vtx_buf)
+    RD.free_rid(pipeline)
+    RD.free_rid(framebuffer)
+    RD.free_rid(shader)
 
 func _process(_delta):
     # handle resizing
-    if not rd.framebuffer_is_valid(framebuffer):
+    if not RD.framebuffer_is_valid(framebuffer):
         create_framebuffer()
 
-    var draw_list := rd.draw_list_begin(framebuffer,
+    var draw_list := RD.draw_list_begin(framebuffer,
         RenderingDevice.INITIAL_ACTION_CLEAR, RenderingDevice.FINAL_ACTION_READ,
         RenderingDevice.INITIAL_ACTION_CLEAR, RenderingDevice.FINAL_ACTION_READ,
-        clearColors)
-    rd.draw_list_bind_render_pipeline(draw_list, pipeline)
-    rd.draw_list_draw(draw_list, false, 1, 3)
-    rd.draw_list_end()
+        clear_colors)
+    RD.draw_list_bind_render_pipeline(draw_list, pipeline)
+    RD.draw_list_bind_vertex_array(draw_list, vtx_array)
+    RD.draw_list_draw(draw_list, false, 1)
+    RD.draw_list_end()
